@@ -349,9 +349,9 @@ def _detect_request_type(text: str) -> str:
         return "other"
     if any(w in t for w in ["redeem", "redemption", "withdraw"]):
         return "redemption"
-    if "change of bank" in t or re.search(r"change (?:the |my |our )?registered bank", t) or re.search(r"replace (?:the |my |our )?registered bank", t) or re.search(r"update (?:the |my |our )?bank", t):
+    if "change of bank" in t or re.search(r"(?:change|replace|update) (?:the |my |our )?(?:registered )?bank", t):
         # Check no investment wording present
-        if not any(w in t for w in ["invest", "purchase", "additional", "folio"]):
+        if not any(w in t for w in ["invest", "purchase", "additional"]):
             return "change of bank"
     if "new folio" in t or re.search(r"open\s+a?\s*.*folio", t):
         return "new folio"

@@ -102,7 +102,7 @@ def _fmt_inr(n):
 
 
 def _build_reply(outcome, request_type, req, checks, codes):
-    received_at = req.get("_received_at", "")
+    received_at = req.get("received_at") or req.get("_received_at", "")
     sender_name = ""
     frm = req.get("from", "")
     if "<" in frm:
@@ -117,9 +117,9 @@ def _build_reply(outcome, request_type, req, checks, codes):
 
     if outcome in ("INVALID_REQUEST", "PEND", "HOLD_AND_REFER"):
         if outcome == "INVALID_REQUEST":
-            body = f"Dear {sender_name},\n\nThank you for your request. We have received it but are unable to process it at this time. Our team will review your request and get back to you.\n\nRegards,\nTCC Team"
+            body = f"Dear {sender_name},\n\nThank you for your request. We have received it but are unable to process it at this time. Our team will review your request and get back to you.\n\nRegards,\nTCC Desk, Validus"
         elif outcome == "PEND" and request_type == "OTHER":
-            body = f"Dear {sender_name},\n\nThank you for your request. Your request is currently being reviewed. An update will be provided shortly.\n\nRegards,\nTCC Team"
+            body = f"Dear {sender_name},\n\nThank you for your request. Your request is currently being reviewed. An update will be provided shortly.\n\nRegards,\nTCC Desk, Validus"
         elif outcome == "PEND":
             tpp_missing = []
             bank_proof = False
@@ -129,8 +129,9 @@ def _build_reply(outcome, request_type, req, checks, codes):
             for c in checks:
                 if "TPP_DOCS_MISSING" in c.get("codes", []):
                     for ev in c.get("evidence", []):
-                        if ev.get("value", "").startswith("Missing:"):
-                            tpp_missing.append(ev["value"])
+                        v = ev.get("value", "")
+                        if v:
+                            tpp_missing.append(v)
                 if "BANK_PROOF_REQUIRED" in c.get("codes", []):
                     bank_proof = True
                 if "KYC_UNABLE_TO_VERIFY" in c.get("codes", []):
@@ -141,6 +142,7 @@ def _build_reply(outcome, request_type, req, checks, codes):
                     minor_majority = True
             parts = [f"Dear {sender_name},"]
             if tpp_missing:
+                tpp_missing = list(dict.fromkeys(tpp_missing))
                 parts.append("\nWe require the following documents to proceed:")
                 for m in tpp_missing:
                     parts.append(f"- {m}")
@@ -149,12 +151,12 @@ def _build_reply(outcome, request_type, req, checks, codes):
             elif kyc_unable:
                 parts.append("\nYour request is on hold and will be re-checked in the next daily cycle.")
             elif kyc_reg_new:
-                parts.append("\nPlease arrange for fresh KYC compliance.")
+                parts.append("\nA fresh KYC (Aadhaar-based where possible) is required before a new folio can be opened with this fund house.")
             elif minor_majority:
                 parts.append("\nPlease provide the change-of-status form, the investor's own KYC, and new bank details.")
             else:
-                parts.append("\nWe require the following documents to proceed:\n\nPlease submit these documents at your earliest convenience.")
-            parts.append("\n\nRegards,\nTCC Team")
+                parts.append("\nYour request is currently under processing. An update will be provided shortly.")
+            parts.append("\n\nRegards,\nTCC Desk, Validus")
             body = "\n".join(parts)
         elif outcome == "HOLD_AND_REFER":
             cooling_end = None
@@ -165,12 +167,16 @@ def _build_reply(outcome, request_type, req, checks, codes):
                             cob = ev["value"].split()[-1]
                             try:
                                 cd = datetime.strptime(cob, "%Y-%m-%d").date()
-                                cooling_end = (cd + timedelta(days=10)).strftime("%d %B %Y")
+                                hold = cd + timedelta(days=10)
+                                cooling_end = f"{hold.day} {hold.strftime('%B %Y')}"
                             except:
                                 pass
             if not cooling_end:
                 cooling_end = _calc_2wd(received_at)
-            body = f"Dear {sender_name},\n\nThank you for your request. It is currently under processing. We expect to provide an update by {cooling_end}.\n\nRegards,\nTCC Team"
+            if cooling_end:
+                body = f"Dear {sender_name},\n\nThank you for your request. It is currently under processing. We expect to provide an update by {cooling_end}.\n\nRegards,\nTCC Desk, Validus"
+            else:
+                body = f"Dear {sender_name},\n\nThank you for your request. It is currently under processing. An update will be provided shortly.\n\nRegards,\nTCC Desk, Validus"
     elif outcome == "REJECT":
         reason = ""
         if "CASH_LIMIT_BREACH" in codes:
@@ -179,7 +185,7 @@ def _build_reply(outcome, request_type, req, checks, codes):
             reason = "your KYC status does not meet the requirements"
         elif "TPP_NO_EXCEPTION" in codes:
             reason = "the payment source is not acceptable"
-        body = f"Dear {sender_name},\n\nThank you for your request. Unfortunately, we are unable to process it as {reason}. The amount will be refunded to the source account.\n\nRegards,\nTCC Team"
+        body = f"Dear {sender_name},\n\nThank you for your request. Unfortunately, we are unable to process it as {reason}. The amount will be refunded to the source account.\n\nRegards,\nTCC Desk, Validus"
     elif outcome == "PROCEED_MODIFIED":
         modifications = []
         if "ARN_INVALID_DIRECT" in codes:
@@ -187,9 +193,9 @@ def _build_reply(outcome, request_type, req, checks, codes):
         if "EUIN_MISSING" in codes:
             modifications.append("Your EUIN was not provided")
         mod_text = "; ".join(modifications)
-        body = f"Dear {sender_name},\n\nThank you for your request. {mod_text}.\n\nRegards,\nTCC Team"
+        body = f"Dear {sender_name},\n\nThank you for your request. {mod_text}.\n\nRegards,\nTCC Desk, Validus"
     else:  # PROCEED
-        body = f"Dear {sender_name},\n\nThank you for your request. It has been checked and released for processing.\n\nRegards,\nTCC Team"
+        body = f"Dear {sender_name},\n\nThank you for your request. It has been checked and released for processing.\n\nRegards,\nTCC Desk, Validus"
 
     return {"to": to, "subject": subject, "body": body}
 
@@ -199,7 +205,7 @@ def _calc_2wd(received_at):
     try:
         dt = datetime.strptime(received_at[:10], "%Y-%m-%d")
     except:
-        return "within 2 working days"
+        return ""
     count = 0
     while count < 2:
         dt += timedelta(days=1)

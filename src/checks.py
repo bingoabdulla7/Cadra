@@ -164,7 +164,7 @@ def evaluate(store, req, intake):
                     "sop_clause": f"{sop_base} 9.4", "codes": [], "hint": None})
 
     # 2. KYC_STATUS
-    _kyc_check(store, pan, request_type, fund_house, received_at, sop_base, checks, email_text)
+    _kyc_check(store, pan, request_type, fund_house, received_at, sop_base, checks, email_text, amc_code)
 
     # 3. THIRD_PARTY_PAYMENT
     _third_party_check(store, folio_no, folio_row, matched_txn, request_type, payment_mode,
@@ -197,7 +197,9 @@ def _unable_policy(intake):
         "request_type": intake.get("guarded_facts", {}).get("request_type", "unknown"),
         "resolved": {},
         "checks": [{"check_id": "POLICY", "result": "UNABLE_TO_VERIFY",
-                     "evidence": [], "sop_clause": "TCC-SOP v4.1 1.0",
+                     "evidence": [{"source": "policy", "ref": "",
+                                   "value": "No applicable policy for received_at/fund house"}],
+                     "sop_clause": "TCC-SOP v4.1 1.0",
                      "codes": [], "hint": "PEND"}],
         "tools_called": [],
         "policy_docs": [],
@@ -298,7 +300,7 @@ def _id_fail_dict(code):
 
 # ── KYC ──────────────────────────────────────────────────────────────────────
 
-def _kyc_check(store, pan, request_type, fund_house, received_at, sop_base, checks, email_text=""):
+def _kyc_check(store, pan, request_type, fund_house, received_at, sop_base, checks, email_text="", folio_amc=None):
     kra_row, lname = store.lookup_kra(pan)
     source = "kra_kyc_snapshot"
     if kra_row is None:
@@ -336,14 +338,20 @@ def _kyc_check(store, pan, request_type, fund_house, received_at, sop_base, chec
     elif status == "REGISTERED":
         folios_for_pan, _ = store.lookup_folio_by_pan(pan)
         if request_type == "NEW_FOLIO_PURCHASE":
-            # Find target fund house from email text
+            # Find target fund house from email text. When the email names both
+            # fund houses, the target is the one that differs from the quoted
+            # folio's fund house; when it names only one, that one.
             fh_lower = email_text.lower()
-            target_fh = None
+            mentioned = set()
             if "narmada" in fh_lower or "nmf" in fh_lower:
-                target_fh = "NMF"
-            elif "tungabhadra" in fh_lower or "tmf" in fh_lower:
-                target_fh = "TMF"
-            if not target_fh:
+                mentioned.add("NMF")
+            if "tungabhadra" in fh_lower or "tmf" in fh_lower:
+                mentioned.add("TMF")
+            if len(mentioned) == 1:
+                target_fh = next(iter(mentioned))
+            elif len(mentioned) > 1:
+                target_fh = next((m for m in mentioned if m != folio_amc), None)
+            else:
                 target_fh = fund_house
             if target_fh:
                 existing = [f for f in folios_for_pan if store.lookup_folio(f)[0] and store.lookup_folio(f)[0].get("amc_code", "").strip() == target_fh]
@@ -389,7 +397,9 @@ def _third_party_check(store, folio_no, folio_row, matched_txn, request_type,
         return
     if matched_txn is None:
         checks.append({"check_id": "THIRD_PARTY_PAYMENT", "result": "UNABLE_TO_VERIFY",
-                        "evidence": [], "sop_clause": f"{sop_base} 5.1",
+                        "evidence": [_make_evidence("transactions", folio_no,
+                                                     "no matching pending transaction")],
+                        "sop_clause": f"{sop_base} 5.6",
                         "codes": [], "hint": "PEND"})
         return
 
@@ -429,24 +439,28 @@ def _third_party_check(store, folio_no, folio_row, matched_txn, request_type,
                             "codes": [], "hint": None})
         else:
             checks.append({"check_id": "THIRD_PARTY_PAYMENT", "result": "UNABLE_TO_VERIFY",
-                            "evidence": [], "sop_clause": f"{sop_base} 5.1",
+                            "evidence": [_make_evidence("transactions", folio_no,
+                                                         f"Account {paying_account} requires bank proof")],
+                            "sop_clause": f"{sop_base} 5.1",
                             "codes": ["BANK_PROOF_REQUIRED"], "hint": "PEND"})
         return
 
     if is_company and ("employee" in email_text.lower() or "payroll" in email_text.lower()):
-        required = ["third-party payment declaration", "employer letter", "employee list", "KYC acknowledgement"]
         cls_count = {}
         for c in classifications:
             cls_count[c] = cls_count.get(c, 0) + 1
         missing = []
-        for r in required:
-            need = 2 if r == "KYC acknowledgement" else 1
-            have = cls_count.get(r, 0)
-            for _ in range(need - have):
+        for r in ["third-party payment declaration", "employer letter", "employee list"]:
+            if cls_count.get(r, 0) < 1:
                 missing.append(r)
+        kyc_ack = cls_count.get("KYC acknowledgement", 0)
+        for i, doc in enumerate(["KYC acknowledgement of the investor",
+                                 "KYC acknowledgement of the employer"]):
+            if kyc_ack <= i:
+                missing.append(doc)
         if missing:
             checks.append({"check_id": "THIRD_PARTY_PAYMENT", "result": "FAIL",
-                            "evidence": [_make_evidence("", "", f"Missing: {m}") for m in missing],
+                            "evidence": [_make_evidence("email", folio_no, m) for m in missing],
                             "sop_clause": f"{sop_base} 5.3",
                             "codes": ["TPP_DOCS_MISSING"], "hint": "PEND"})
         else:
@@ -456,7 +470,10 @@ def _third_party_check(store, folio_no, folio_row, matched_txn, request_type,
         return
 
     checks.append({"check_id": "THIRD_PARTY_PAYMENT", "result": "FAIL",
-                    "evidence": [], "sop_clause": f"{sop_base} 5.2",
+                    "evidence": [_make_evidence("transactions",
+                                                 matched_txn.get("txn_id", "") or folio_no,
+                                                 f"Payer '{remitter_name}' is not an acceptable payer")],
+                    "sop_clause": f"{sop_base} 5.7",
                     "codes": ["TPP_NO_EXCEPTION"], "hint": "REJECT"})
 
 
@@ -556,7 +573,8 @@ def _cob_cooling_check(store, folio_no, request_type, txn_date, sop_base, checks
         return
     if not txn_date:
         checks.append({"check_id": "COB_COOLING", "result": "UNABLE_TO_VERIFY",
-                        "evidence": [], "sop_clause": f"{sop_base} 6.4",
+                        "evidence": [_make_evidence("bank_mandates", folio_no, "No transaction date")],
+                        "sop_clause": f"{sop_base} 6.4",
                         "codes": [], "hint": "PEND"})
         return
     mandates, mname = store.lookup_mandates(folio_no)
@@ -584,14 +602,15 @@ def _cob_cooling_check(store, folio_no, request_type, txn_date, sop_base, checks
             changed_dt = datetime.strptime(contact_changed[:10], "%Y-%m-%d").date()
             if cob_date and 0 <= (cob_date - changed_dt).days <= 30:
                 checks.append({"check_id": "COB_COOLING", "result": "FAIL",
-                                "evidence": [_make_evidence("folio_master", folio_no, f"Contact changed {contact_changed}")],
+                                "evidence": [_make_evidence("folio_master", folio_no, f"Contact changed {contact_changed}"),
+                                             _make_evidence("bank_mandates", folio_no, f"COB received {cob_date}")],
                                 "sop_clause": f"{sop_base} 6.5",
                                 "codes": ["HIGH_RISK_CONTACT_COB", "COB_COOLING"], "hint": "HOLD_AND_REFER"})
                 return
         except:
             pass
     checks.append({"check_id": "COB_COOLING", "result": "FAIL",
-                    "evidence": [_make_evidence("bank_mandates", folio_no, f"COB {cob_date}")],
+                    "evidence": [_make_evidence("bank_mandates", folio_no, f"COB received {cob_date}")],
                     "sop_clause": f"{sop_base} 6.4",
                     "codes": ["COB_COOLING"], "hint": "PEND"})
 
@@ -600,8 +619,13 @@ def _cob_cooling_check(store, folio_no, request_type, txn_date, sop_base, checks
 
 def _distributor_check(store, matched_txn, request_type, arn, euin, fund_house,
                        txn_date, sop_base, checks):
-    # NOT_APPLICABLE unless matched txn has plan=REGULAR and type is purchase/SIP reg
-    if not matched_txn or matched_txn.get("plan", "").strip().upper() != "REGULAR" or request_type not in ("NEW_FOLIO_PURCHASE", "ADDITIONAL_PURCHASE", "SIP_REGISTRATION"):
+    # NOT_APPLICABLE unless matched txn has plan=REGULAR and type is purchase/SIP reg.
+    # Never raise ARN_INVALID_DIRECT / EUIN_MISSING for a Direct-plan or stale-KYC request.
+    kyc_stale = any(c.get("check_id") == "KYC_STATUS" and c.get("result") == "UNABLE_TO_VERIFY"
+                    for c in checks)
+    if (not matched_txn or matched_txn.get("plan", "").strip().upper() != "REGULAR"
+            or request_type not in ("NEW_FOLIO_PURCHASE", "ADDITIONAL_PURCHASE", "SIP_REGISTRATION")
+            or kyc_stale):
         checks.append(_na_check("DISTRIBUTOR_CODE", "Not a regular-plan purchase or SIP registration"))
         return
 
@@ -783,7 +807,9 @@ def _referral_check(store, folio_no, pan, fund_house, request_type, txn_date,
     # Redemption with no matched row
     if request_type == "REDEMPTION" and matched_txn is None:
         checks.append({"check_id": "REFERRAL", "result": "UNABLE_TO_VERIFY",
-                        "evidence": [], "sop_clause": f"{sop_base} 8.4",
+                        "evidence": [_make_evidence("transactions", folio_no,
+                                                     "no matching pending transaction")],
+                        "sop_clause": f"{sop_base} 8.3",
                         "codes": [], "hint": "PEND"})
         return
 

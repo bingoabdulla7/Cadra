@@ -1,6 +1,6 @@
 """LLM enrichment — one structured call per request via Gemini or Groq."""
 from __future__ import annotations
-import json, os, base64, time, urllib.request, urllib.error
+import json, os, base64, re, time, urllib.request, urllib.error
 from typing import Any
 from pathlib import Path
 
@@ -212,7 +212,8 @@ def enrich(req: dict, intake: dict) -> tuple[dict, list[dict], list[str]]:
             except (ValueError, TypeError):
                 pass
 
-    if parsed.get("utr") and isinstance(parsed["utr"], list):
+    # Deterministic values win: only fill arn/euin/utr/payment_mode when empty.
+    if not guarded.get("utr") and parsed.get("utr") and isinstance(parsed["utr"], list):
         for u in parsed["utr"]:
             if u.lower() in lower:
                 guarded["utr"] = u
@@ -223,13 +224,15 @@ def enrich(req: dict, intake: dict) -> tuple[dict, list[dict], list[str]]:
                 if l4 not in guarded.get("last4_account", []):
                     guarded.setdefault("last4_account", []).append(l4)
 
-    if parsed.get("arn") and parsed["arn"].lower() in lower:
-        guarded["arn"] = parsed["arn"]
+    if not guarded.get("arn") and parsed.get("arn") and parsed["arn"].lower() in lower:
+        digits = re.sub(r"\D", "", str(parsed["arn"]))
+        if digits:
+            guarded["arn"] = "ARN-" + digits
 
-    if parsed.get("euin") and parsed["euin"].lower() in lower:
+    if not guarded.get("euin") and parsed.get("euin") and parsed["euin"].lower() in lower:
         guarded["euin"] = parsed["euin"]
 
-    if parsed.get("payment_mode") and parsed["payment_mode"].lower() in lower:
+    if not guarded.get("payment_mode") and parsed.get("payment_mode") and parsed["payment_mode"].lower() in lower:
         guarded["payment_mode"] = parsed["payment_mode"]
 
     # Investor name — only if words appear in email text
