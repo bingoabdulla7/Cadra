@@ -1,0 +1,29 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Environment
+.env
+*.env
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+
+# Temp files
+*.tmp
+_temp_/
+_match_pending.py
+inbox_*.txt
+SOP_*.txt
+TMF_*.txt
+CURRENT_WORKFLOW.txt
+
+# OS
+.DS_Store
+Thumbs.db
+opencode.json
