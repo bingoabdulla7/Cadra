@@ -1,8 +1,8 @@
 # TCC Desk Agent
 
-Service that answers distributor/agent email requests about folios, transactions, KYC and mandates, using prepared records plus the governing policy documents.
+An agent that helps a transfer-agency desk interpret incoming investor emails against the records and policy documents it holds, and returns a decision with evidence.
 
-Deployed at: https://tcc-desk-agent.onrender.com
+It is deployed at https://tcc-desk-agent.onrender.com.
 
 ## Prepare the data
 
@@ -10,49 +10,55 @@ Deployed at: https://tcc-desk-agent.onrender.com
 python -m src.data
 ```
 
-This reads the source files, fixes the problems found in them (see below) and writes the prepared records. After preparation the store holds 83 folios, 522 transactions, 105 bank mandates, 95 KRA rows and 32 distributor rows (24 unique ARNs).
+This builds the store: 83 folios, 522 transactions, 105 bank mandates, 95 KRA rows and 32 distributor rows (24 unique ARNs).
 
-Data problems handled during preparation:
-
-- 56 transaction folio numbers not in `NNNNNNNN/NN` form
-- 53 dates written `dd-mm-yyyy`
-- 4 duplicate transaction pairs sharing a UTR
-- 6 KRA rows with blank status text (status taken from the code) and 8 codes missing leading zeros
-- one PAN on several folios and names written differently
-
-## Run the service
+## Run
 
 ```
 python -m src.solution
 ```
 
-The app reads the `PORT` environment variable and serves the HTTP API on that port.
+The app reads `PORT`.
 
 ## Environment variables
 
-| variable | purpose |
-|---|---|
-| `GEMINI_API_KEY` | Gemini API key (LLM calls) |
-| `GROQ_API_KEY` | Groq API key |
-| `LLM_MODE` | Selects how the model is used |
+- `GEMINI_API_KEY` - from the host, never committed.
+- `GROQ_API_KEY` - from the host, never committed.
+- `LLM_MODE` - `auto` uses the models; `off` skips them.
+
+## Model order
+
+1. Gemini 3.1 Flash Lite
+2. Gemini 3.5 Flash Lite
+3. Groq Qwen3.8-27B
+4. Groq gpt-oss-120b
+
+## Deploy on Render
+
+- Build: `pip install -r requirements.txt`
+- Start: `uvicorn src.solution:app --host 0.0.0.0 --port $PORT`
 
 ## Where the rules live
 
-- `src/checks.py` — the checks run against the records.
-- `src/outcome.py` — how the outcome and reason codes are decided.
-- `src/data.py`, function `select_policy` — chooses the governing policy document (SOP v4.1 current, effective 1 Aug 2026; TMF-ADD-02 effective 15 Sep 2026, TMF only; SOP v3.2 superseded and never selected). Selection reads each document's own status and effective date against `received_at`.
+- `src/checks.py`
+- `src/outcome.py`
+- `src/data.py` (`select_policy`)
 
-## Response fields
+## Run the evaluation
 
-Responses carry the outcome plus these extra fields:
+```
+python evaluation/runner.py --base-url <url>
+```
+
+## Extra response fields
 
 - `draft_status`
 - `review_flags`
 - `decision_basis`
 - `notes`
 
-## Other documents
+## More
 
-- `FUTURE_WORKFLOW.md` — how a request travels through the system.
-- `APPROACH.md` — approach and links.
-- `ARTEFACT.md` — artefact notes.
+- [FUTURE_WORKFLOW.md](FUTURE_WORKFLOW.md)
+- [APPROACH.md](APPROACH.md)
+- [ARTEFACT.md](ARTEFACT.md)

@@ -1,26 +1,32 @@
 # Approach
 
-## A. What the system does
+Entry point: this file links [FUTURE_WORKFLOW.md](FUTURE_WORKFLOW.md), [ARTEFACT.md](ARTEFACT.md), [README.md](README.md), [src/](src/) and [evaluation/](evaluation/).
 
-The service takes a distributor/agent email request and answers it from prepared records: folios, transactions, bank mandates, KRA rows and distributor rows, judged against the governing policy documents. It returns an outcome plus `draft_status`, `review_flags`, `decision_basis` and `notes`. It is deployed at https://tcc-desk-agent.onrender.com. See [README.md](README.md) to run it.
+## A. Request types
 
-## B. How a request travels
+Seven types. Six are handled: NEW_FOLIO_PURCHASE, ADDITIONAL_PURCHASE, SIP_REGISTRATION, SIP_INSTALMENT, REDEMPTION and CHANGE_OF_BANK (proof presence only, not document content). OTHER covers switches, exchange transactions, nomination, transmission and FIU decisions (SOP 2.2) and is answered PEND.
 
-Intake reads the email and attachments; extraction pulls out the facts (rules first, then one guarded model call); identity finds the folio, investor and transaction; policy selection picks the document; checks run; the outcome and reply are decided; the trace is recorded; a person reviews where needed. The full picture, failure paths, the checks table and the people table are in [FUTURE_WORKFLOW.md](FUTURE_WORKFLOW.md).
+## B. Agent design
 
-## C. Where the rules live
+A pipeline runs intake, one model call for facts only, a guard, deterministic checks, outcome and reply. The tools are the DataStore lookups (`lookup_folio`, `lookup_folio_by_pan`, `lookup_kra`, `lookup_mandates`, `lookup_transactions`, `lookup_distributor`, `get_cash_total`, `select_policy`) and `read_attachment`. Code calls them and lists them in `trace.tools_called`; each returns the record and its source. The model calls no tools and decides nothing. Policy is chosen from each document's own header. Failure paths are as in [FUTURE_WORKFLOW.md](FUTURE_WORKFLOW.md). The outcome is PROCEED only when every check passes.
 
-Deterministic rules carry the logic, so most answers are reproducible:
+## C. Data and grounding
 
-- `src/checks.py` — the checks, including folio format, date parsing, duplicate UTRs, KRA status and codes, PAN/name consistency, payment confirmation and bank mandates.
-- `src/outcome.py` — outcome, reason codes and reply drafting.
-- `src/data.py`, function `select_policy` — selects the governing document from its own status and effective date against `received_at` (SOP v4.1 current; TMF-ADD-02 for TMF; SOP v3.2 never selected).
-- `src/intake.py`, `src/llm.py`, `src/solution.py` — intake, the guarded model call, and the service entry point. All code is under [src/](src/).
+A folio is resolved by exact canonical lookup, an investor by PAN, and the pending transaction of the same kind by UTR then amount, with identical twins collapsed. An email amount that matches no pending row means no transaction and UNABLE_TO_VERIFY. Any disagreement is UNABLE_TO_VERIFY, carrying the evidence (source file, record key, value) and the clause on the check.
 
-## D. Evaluation
+## D. Evaluation design
 
-65 cases were written in this session. First accuracy measured on the live service was 55.4% (36 of 65), with 5 unsafe errors and 23 over-cautious errors. Many cases use folios with no pending register row, so the service answers `PEND` because it cannot confirm the payment; some labels were unrealistic; and the set was written by the same agent that wrote the service. Median cost per request is about $0.0002 with Gemini flash-lite (list prices, unconfirmed) and median latency about 5 seconds. Cases and notes are in [evaluation/](evaluation/).
+A correct result is outcome, reason-code set, approver, request type and resolved folio and transaction all right with a valid contract. The costliest errors are unsafe ones: an outcome less restrictive than expected, such as PROCEED instead of REJECT, and tipping off. Over-cautious errors cost desk time. The bar before people review less is zero unsafe errors on a larger held-out set including real desk emails, plus agreement with checkers. Today that bar is not met.
 
-## E. Known problems and gaps
+## E. Risks and trade-offs
 
-Groq calls return HTTP 403 on Render and a model attempt waits up to 20 seconds; `KYC_REGISTERED_NEW_AMC` is missing on new-folio requests; some `FAIL` results lack evidence; reply wording needs polish. The human review screen and persistent audit storage are not built. Details are in [ARTEFACT.md](ARTEFACT.md).
+| risk | mitigation |
+| --- | --- |
+| Model misreads | Facts only, a guard, and code decides. |
+| Instructions hidden in documents | Document text is treated as data. |
+| Stale or missing sources | UNABLE_TO_VERIFY. |
+| Model rate limits and slowness | Fallback chain, 25 s budget, rule-based fallback. |
+| No pending register row | PEND, the safe answer. |
+| Policy ambiguity | Judgement calls: new-folio Registered KYC is PEND per SOP 4.3 text; redemption in a cooling period after a contact change carries HIGH_RISK_CONTACT_COB and COB_COOLING; an own unregistered account with no proof is PEND with BANK_PROOF_REQUIRED; a named pending payout account is disregarded; OTHER is PEND. |
+
+Given up: human review screen, persistent audit storage, reading document content beyond the model's transcription, rules live in code, replies are templates.

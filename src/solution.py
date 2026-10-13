@@ -86,7 +86,59 @@ async def health():
     return {"status": "ok"}
 
 
-@app.post("/requests")
+@app.post(
+    "/requests",
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "request_id": {"type": "string"},
+                            "received_at": {"type": "string"},
+                            "channel": {"type": "string"},
+                            "from": {"type": "string"},
+                            "to": {"type": "string"},
+                            "cc": {"type": "string"},
+                            "subject": {"type": "string"},
+                            "body": {"type": "string"},
+                            "attachments": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "file_name": {"type": "string"},
+                                        "content_type": {"type": "string"},
+                                        "content_base64": {"type": "string"},
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    "example": {
+                        "request_id": "REQ-1001",
+                        "received_at": "2024-06-01T09:30:00Z",
+                        "channel": "email",
+                        "from": "investor@example.com",
+                        "to": "service@example.com",
+                        "cc": "",
+                        "subject": "Statement request",
+                        "body": "Please share my account statement.",
+                        "attachments": [
+                            {
+                                "file_name": "request.pdf",
+                                "content_type": "application/pdf",
+                                "content_base64": "JVBERi0xLjQK...",
+                            }
+                        ],
+                    },
+                }
+            },
+        }
+    },
+)
 async def handle_request(raw: Request):
     global store
     wstore = store
