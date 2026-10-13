@@ -1,48 +1,58 @@
-# F1 Capstone Template
+# TCC Desk Agent
 
-Starter repository for the Cadra F1 walking-skeleton capstone. Use OpenCode with the Cadra provider to build your solution, document your approach, and submit a public GitHub repo for evaluation.
+Service that answers distributor/agent email requests about folios, transactions, KYC and mandates, using prepared records plus the governing policy documents.
 
-## Prerequisites
+Deployed at: https://tcc-desk-agent.onrender.com
 
-- Python 3.11+
-- [OpenCode](https://opencode.ai) ≥ 1.17.0
-- A Cadra JWT (`CADRA_TOKEN`) from the F1 Setup page
-- Your Cadra proxy URL (from the F1 Setup page)
-
-## Setup
-
-1. Clone this repo (or use it as a GitHub template).
-2. Set the environment variables (both values come from the F1 Setup page):
-   ```bash
-   export CADRA_PROXY_URL=<your-proxy-url>   # e.g. https://your-proxy.example.com/v1
-   export CADRA_TOKEN=<your-cadra-jwt>
-   ```
-   `opencode.json` reads both via `{env:…}` — no file edits needed.
-3. Install OpenCode if not already installed (see [opencode.ai](https://opencode.ai)).
-4. Run OpenCode in this directory:
-   ```bash
-   opencode
-   ```
-5. Complete `APPROACH.md` and implement your solution in `src/` (start with `src/solution.py`).
-6. Push your work to a **public** GitHub repository.
-7. Submit your repo URL on the F1 demo page.
-
-## Python environment (optional)
-
-```bash
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-## Project layout
+## Prepare the data
 
 ```
-.
-├── opencode.json    # Cadra provider config (reads CADRA_PROXY_URL + CADRA_TOKEN from env)
-├── APPROACH.md      # Your written approach (required for submission)
-├── src/
-│   └── solution.py  # Your solution code
-├── requirements.txt
-└── README.md
+python -m src.data
 ```
+
+This reads the source files, fixes the problems found in them (see below) and writes the prepared records. After preparation the store holds 83 folios, 522 transactions, 105 bank mandates, 95 KRA rows and 32 distributor rows (24 unique ARNs).
+
+Data problems handled during preparation:
+
+- 56 transaction folio numbers not in `NNNNNNNN/NN` form
+- 53 dates written `dd-mm-yyyy`
+- 4 duplicate transaction pairs sharing a UTR
+- 6 KRA rows with blank status text (status taken from the code) and 8 codes missing leading zeros
+- one PAN on several folios and names written differently
+
+## Run the service
+
+```
+python -m src.solution
+```
+
+The app reads the `PORT` environment variable and serves the HTTP API on that port.
+
+## Environment variables
+
+| variable | purpose |
+|---|---|
+| `GEMINI_API_KEY` | Gemini API key (LLM calls) |
+| `GROQ_API_KEY` | Groq API key |
+| `LLM_MODE` | Selects how the model is used |
+
+## Where the rules live
+
+- `src/checks.py` — the checks run against the records.
+- `src/outcome.py` — how the outcome and reason codes are decided.
+- `src/data.py`, function `select_policy` — chooses the governing policy document (SOP v4.1 current, effective 1 Aug 2026; TMF-ADD-02 effective 15 Sep 2026, TMF only; SOP v3.2 superseded and never selected). Selection reads each document's own status and effective date against `received_at`.
+
+## Response fields
+
+Responses carry the outcome plus these extra fields:
+
+- `draft_status`
+- `review_flags`
+- `decision_basis`
+- `notes`
+
+## Other documents
+
+- `FUTURE_WORKFLOW.md` — how a request travels through the system.
+- `APPROACH.md` — approach and links.
+- `ARTEFACT.md` — artefact notes.
