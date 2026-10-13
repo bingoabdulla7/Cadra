@@ -1,13 +1,91 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>Artefact</title>
+<meta charset="utf-8">
+<title>Artefact</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 50rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; color: #222; }
+  h1 { border-bottom: 2px solid #ddd; padding-bottom: .3rem; }
+  h2 { margin-top: 1.8rem; }
+  ul { padding-left: 1.4rem; }
+  li { margin: .25rem 0; }
+  code { background: #f4f4f4; padding: .1rem .3rem; border-radius: 3px; font-family: Consolas, monospace; font-size: .9em; }
+</style>
 </head>
 <body>
-  <p>
-    Fill this file with the written deliverable your problem brief asks for (for example, a
-    Reconciliation Report). The grader reads this exact file — do not rename or move it.
-  </p>
+
+<h1>Artefact</h1>
+
+<h2>1. Records held after preparation</h2>
+<p>After <code>python -m src.data</code> the store holds:</p>
+<ul>
+<li>83 folios</li>
+<li>522 transactions</li>
+<li>105 bank mandates</li>
+<li>95 KRA rows</li>
+<li>32 distributor rows (24 unique ARNs)</li>
+</ul>
+<p>Data problems and how each was handled:</p>
+<ul>
+<li>56 transaction folio numbers were not in the required <code>NNNNNNNN/NN</code> form. The digits were extracted and re-formatted. None were substituted.</li>
+<li>53 dates were written <code>dd-mm-yyyy</code>. Both formats were parsed.</li>
+<li>4 duplicate transaction pairs shared a UTR. Identical twins were counted once, keeping the lowest id, and the twin was flagged.</li>
+<li>6 KRA rows had blank status text. Status was taken from the code.</li>
+<li>8 KRA codes were missing leading zeros.</li>
+<li>One PAN appeared on several folios, with names written differently. The investor was identified by PAN and folio.</li>
+</ul>
+
+<h2>2. Policy documents</h2>
+<ul>
+<li>SOP v4.1 (current, effective 1 Aug 2026) applies to every request.</li>
+<li>TMF-ADD-02 (effective 15 Sep 2026) applies to TMF folios only.</li>
+<li>SOP v3.2 is superseded and is never selected.</li>
+</ul>
+<p>Selection reads each document's own status, effective date and fund house against <code>received_at</code> in <code>src/data.py select_policy</code>. If no document is in force, the result is <code>UNABLE_TO_VERIFY</code>.</p>
+
+<h2>3. Evaluation</h2>
+<p>65 cases were written in the build session: 10 inbox requests, 8 for the other pending register rows, and 47 variants (rewordings, folio formats, identity failures, stale KYC, hidden instructions, contradictions, bank change, out of scope).</p>
+<p>First measurement on the live service: 55.4% correct outcomes (36 of 65), 5 unsafe errors, 23 over-cautious errors, 1 request timed out.</p>
+<p>After the changes below, measured on the live service: 55.4% (36 of 65), 5 unsafe, 24 over-cautious, no timeouts.</p>
+<p>The outcome accuracy did not improve. Of the 29 mismatches: 11 are folios with no pending register row (the service answers PEND because it cannot confirm the payment, while the label expects PROCEED or a decision); 4 are cases with no folio in the data where the service says it cannot identify the folio; 2 are contested labels (C002 expects PROCEED for a grandparent's payment, which SOP 5.4 does not allow); and 12 are mixed: some labels contradict themselves (C003) and some are real gaps (a PAN quoted in the email is not compared with the folio, C038; payers who are not the first holder are not rejected when no matching payment row exists, C026 and C045). The set and the service were written by the same agent, and several labels were unrealistic.</p>
+<p>Changes made after the first measurement:</p>
+<ul>
+<li>Every FAIL or UNABLE_TO_VERIFY now carries evidence and a clause.</li>
+<li>New-folio requests with Registered KYC now return <code>KYC_REGISTERED_NEW_AMC</code> using the target fund house.</li>
+<li>Change-of-bank wording is recognised.</li>
+<li>Replies give the cooling-hold date and a clean document list.</li>
+<li>The model merge no longer overwrites a correct ARN.</li>
+<li>A user-agent header fixed Groq HTTP 403 on Render.</li>
+<li>Model attempts are capped at 12 s with a 25 s budget.</li>
+</ul>
+<p>These improved what the outcome metric does not measure.</p>
+
+<h2>4. Cost</h2>
+<p>Median about $0.0003 per request (list prices, unconfirmed; input $0.25 and output $1.50 per million tokens for Gemini flash-lite, $0.80 and $4.00 for Qwen). A 52-request run cost about $0.021. Median latency about 6 seconds. Of those requests, 34 were answered by Gemini 3.1 Flash Lite and 18 by Qwen3.8-27B through Groq.</p>
+
+<h2>5. Not built, fragile, and next steps</h2>
+<p>Not built:</p>
+<ul>
+<li>Human review screen.</li>
+<li>Persistent audit storage (the audit log is a local file on a free host).</li>
+<li>Reading of document content beyond the model's transcription.</li>
+</ul>
+<p>Fragile:</p>
+<ul>
+<li>Free-tier model rate limits and slow responses.</li>
+<li>The free host sleeps after 15 minutes idle.</li>
+<li>Outcomes depend on my reading of ambiguous SOP clauses.</li>
+<li>Model names and prices change.</li>
+</ul>
+<p>Next engineer, first:</p>
+<ul>
+<li>Relabel the 29 mismatches with the desk lead and re-run.</li>
+<li>Add held-out cases and real desk emails.</li>
+<li>Compare a PAN quoted in an email with the folio's PAN.</li>
+<li>Reject non-parent payers even when no payment row exists.</li>
+<li>Confirm model prices and limits.</li>
+<li>Add the review screen and persistent audit storage.</li>
+</ul>
+
 </body>
 </html>

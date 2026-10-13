@@ -36,7 +36,7 @@ def decide(result: dict, req: dict) -> dict:
     if has_unable and final_hint == "PROCEED":
         final_hint = "PEND"
 
-    if request_type == "OTHER":
+    if request_type == "OTHER" and final_hint in ("PROCEED", "PROCEED_MODIFIED"):
         final_hint = "PEND"
 
     outcome_map = {
